@@ -7,10 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import logging
-
 
 # Load environment variables
 load_dotenv()
@@ -20,8 +17,7 @@ LINKEDIN_PASSWORD = os.getenv("LINKEDIN_PASSWORD")
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "chromedriver")
 
 # Define target keywords
-TARGET_KEYWORDS = ["sports","boxing","football","cricket","tennis","basketball","hockey","athletics"]
-# TARGET_KEYWORDS = ["engineering", "software", "technology", "developer", "programming", "data science", "AI", "machine learning"]
+TARGET_KEYWORDS = ["engineering", "software", "technology", "AI", "data", "robotics"]
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 # Reusable Selenium driver
 driver = None
-
 
 def get_driver():
     global driver
@@ -63,8 +58,6 @@ def get_driver():
         logger.error(f"Unexpected error during driver init: {str(e)}")
         raise
 
-
-# model="mistral"
 def is_similar_with_ollama(description, keywords, threshold=0.5, model="mistral"):
     prompt = f"""
 You are an intelligent assistant. Check if this company description is related to any of the following keywords:
@@ -79,77 +72,53 @@ Reply only with "YES" if related or "NO" if not.
             json={"model": model, "prompt": prompt, "stream": False}
         )
         reply = response.json().get("response", "").strip().lower()
-        print(f"Ollama reply: {reply}")
         return "yes" in reply
-    
     except Exception as e:
         logger.error(f"Ollama similarity check failed: {e}")
         return False
 
-
 def get_company_info(company_url, driver):
     try:
-        # Visit company "about" page
-        about_url = company_url.rstrip("/") + "/about"
-        logger.info(f"Visiting: {about_url}")
-        driver.get(about_url)
-        time.sleep(2)  # You can replace this with WebDriverWait for robustness
+        driver.get(company_url + "/about")
+        time.sleep(3)
 
-        # Extract company description from the overview section
         about_text = ""
         try:
-            # More robust selector targeting <p class="break-words"> inside the overview section
-            about_section = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "section.org-about-module__margin-bottom p.break-words"))
-            )
+            about_section = driver.find_element(By.CLASS_NAME, "break-words")
             about_text = about_section.text.strip()
-        except Exception as e:
-            logger.warning(f"No about section found or timed out for: {company_url} | Error: {e}")
+        except NoSuchElementException:
+            logger.warning(f"No about section found for: {company_url}")
             return None
 
-        # Check similarity using LLM (Ollama)
         if is_similar_with_ollama(about_text, TARGET_KEYWORDS):
-            logger.info(f"Company matched keywords: {company_url}")
             return {
                 "company_url": company_url,
                 "about": about_text
             }
         else:
-            logger.info(f"Filtered out (no keyword match): {company_url}")
+            logger.info(f"Filtered out company (no match): {company_url}")
             return None
-
     except Exception as e:
         logger.error(f"Error scraping company {company_url}: {str(e)}")
         return None
 
-
 def extract_company_links(driver):
-    """Extracts all company profile URLs from the experience section."""
-    company_links = set()
+    """Extract company profile URLs from the Experience section of a LinkedIn profile"""
+    links = []
     try:
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
-
-        # Find all <a> tags where the href contains '/company/'a
-        anchors = driver.find_elements(By.XPATH, "//a[@data-field='experience_company_logo']")
-
-        for anchor in anchors:
-            href = anchor.get_attribute("href")
-            if href and "/company/" in href:
-                base_url = href.split("?")[0]
-                company_links.add(base_url)
-        
-        logger.info(f"Extracted {len(company_links)} unique company links from experience section.")
+        experience_cards = driver.find_elements(By.XPATH, "//section[contains(@id,'experience')]//a[contains(@href,'/company/')]")
+        for card in experience_cards:
+            href = card.get_attribute("href")
+            if href and '/company/' in href:
+                links.append(href.split("?")[0])
+        logger.info(f"Found {len(links)} company links in experience")
     except Exception as e:
-        logger.warning(f"Failed to extract company links: {e}")
-    
-    return list(company_links)
+        logger.warning(f"Error extracting experience section: {str(e)}")
+    return list(set(links))
 
-
-def validate_linkedin_profile(profile_url=""):
-    if profile_url == "":
-        return None
-    
+def validate_linkedin_profile(profile_url="https://www.linkedin.com/in/ahssin-iqbal-a7a159286"):
     try:
         logger.info(f"Visiting profile: {profile_url}")
         d = get_driver()

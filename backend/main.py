@@ -85,41 +85,35 @@ def check_csv_issues(file_path):
     except Exception as e:
         logger.error(f"Error checking CSV issues: {str(e)}")
         return f"Error validating CSV: {str(e)}"
-
+    
 @app.post("/upload/")
-def runselenium():
-    url = 'https://www.linkedin.com/in/ahssin-iqbal-a7a159286'
-    result = validate_linkedin_profile(url)
-    result = validate_linkedin_profile('https://www.linkedin.com/in/harvey-lavigne-b81b7751')
-    return result
-
-# async def upload_csv(file: UploadFile = File(...)):
-    # try:
-    #     logger.info(f"Received file upload: {file.filename}")
-    #     if not file.filename.endswith('.csv'):
-    #         logger.warning(f"Invalid file type: {file.filename}")
-    #         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
+async def upload_csv(file: UploadFile = File(...)):
+    try:
+        logger.info(f"Received file upload: {file.filename}")
+        if not file.filename.endswith('.csv'):
+            logger.warning(f"Invalid file type: {file.filename}")
+            raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
         
-    #     file_location = os.path.join(UPLOAD_DIR, file.filename)
-    #     with open(file_location, "wb") as f:
-    #         content = await file.read()
-    #         f.write(content)
+        file_location = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_location, "wb") as f:
+            content = await file.read()
+            f.write(content)
         
-    #     logger.info(f"File saved to: {file_location}")
+        logger.info(f"File saved to: {file_location}")
         
-    #     # Check for common CSV issues
-    #     issues = check_csv_issues(file_location)
-    #     if issues:
-    #         logger.warning(f"CSV validation failed: {issues}")
-    #         raise HTTPException(status_code=400, detail=issues)
+        # Check for common CSV issues
+        issues = check_csv_issues(file_location)
+        if issues:
+            logger.warning(f"CSV validation failed: {issues}")
+            raise HTTPException(status_code=400, detail=issues)
         
-    #     return {"filename": file.filename}
-    # except HTTPException:
-    #     raise
-    # except Exception as e:
-    #     logger.error(f"Error during file upload: {str(e)}")
-    #     raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
+        return {"filename": file.filename}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during file upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    
 @app.post("/process/")
 async def process_csv(background_tasks: BackgroundTasks, filename: str = Form(...)):
     try:
@@ -171,11 +165,8 @@ async def process_csv(background_tasks: BackgroundTasks, filename: str = Form(..
 def process_profiles(df, result_path):
     try:
         logger.info("Starting profile validation")
-        # Validate LinkedIn profiles
-        lead_statuses = []
-        job_titles = []
-        connections_list = []
-        
+        # Prepare a list to collect valid rows
+        valid_rows = []
         for idx, row in df.iterrows():
             url = None
             # Try different column names for LinkedIn URL
@@ -183,39 +174,41 @@ def process_profiles(df, result_path):
                 if col in row and isinstance(row[col], str) and row[col].startswith("http"):
                     url = row[col]
                     break
-            
             if not url:
-                lead_statuses.append("invalid")
-                job_titles.append("")
-                connections_list.append("")
-                continue
-            
+                continue  # Skip rows without a valid URL
             try:
                 logger.info(f"Validating profile {idx+1}/{len(df)}: {url}")
                 result = validate_linkedin_profile(url)
-                if result["has_photo"] and result["job_title"]:
-                    lead_statuses.append("valid")
-                else:
-                    lead_statuses.append("invalid")
-                job_titles.append(result["job_title"])
-                connections_list.append(result["connections"])
+                if result is None or not result.get("companies"):
+                    continue  # Skip rows where validation fails, returns None, or no matching companies
+                # Use the first matching company
+                company = result["companies"][0]
+                output_row = row.to_dict()
+                output_row["lead_status"] = "valid" if result["has_photo"] and result["job_title"] else "invalid"
+                output_row["profile_job_title"] = result["job_title"]
+                output_row["profile_connections"] = result["connections"]
+                output_row["company_url"] = company.get("company_url", "")
+                output_row["company_about"] = company.get("about", "")
+                output_row["product_category"] = ""  # Placeholder for future classification
+                valid_rows.append(output_row)
             except Exception as e:
                 logger.error(f"Error validating profile {url}: {str(e)}")
-                lead_statuses.append("error")
-                job_titles.append("")
-                connections_list.append("")
-        
-        df["lead_status"] = lead_statuses
-        df["profile_job_title"] = job_titles
-        df["profile_connections"] = connections_list
-        df["product_category"] = ""  # Placeholder for future classification
-        
-        # Sanitize DataFrame before saving
-        df = sanitize_dataframe(df)
-        
-        # Save result
-        df.to_csv(result_path, index=False)
-        logger.info(f"Processing complete, saved to {result_path}")
+                # Skip this row on error
+                continue
+        # Create a new DataFrame only with valid rows
+        if valid_rows:
+            result_df = pd.DataFrame(valid_rows)
+            # Sort by profile_job_title (or any other field you prefer)
+            if "profile_job_title" in result_df.columns:
+                result_df = result_df.sort_values(by=["profile_job_title"]).reset_index(drop=True)
+            # Sanitize DataFrame before saving
+            result_df = sanitize_dataframe(result_df)
+            result_df.to_csv(result_path, index=False)
+            logger.info(f"Processing complete, saved to {result_path}")
+        else:
+            # If no valid rows, save an empty file with headers
+            df.head(0).to_csv(result_path, index=False)
+            logger.info(f"No valid profiles found. Saved empty file to {result_path}")
     except Exception as e:
         logger.error(f"Error in background processing: {str(e)}")
 
