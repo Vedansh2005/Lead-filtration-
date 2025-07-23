@@ -20,7 +20,7 @@ LINKEDIN_PASSWORD = os.getenv("LINKEDIN_PASSWORD")
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH", "chromedriver")
 
 # Define target keywords
-TARGET_KEYWORDS = ["sports","boxing","football","cricket","tennis","basketball","hockey","athletics"]
+TARGET_KEYWORDS = ["sports","boxing","football","cricket","tennis","basketball","hockey","athletics","sports goods", "netting","fishing","snowboard","sandboard","sail boats","golf","manufacturing","bicycle","surfboard"]
 # TARGET_KEYWORDS = ["engineering", "software", "technology", "developer", "programming", "data science", "AI", "machine learning"]
 
 # Set up logging
